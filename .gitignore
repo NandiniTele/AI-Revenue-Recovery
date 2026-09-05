@@ -1,0 +1,23 @@
+# Ignore environment and secret files
+.env
+.env.*
+
+# Python cache and compiled files
+__pycache__/
+*.pyc
+
+# Virtual environment
+venv/
+
+# Node modules
+node_modules/
+
+# Vercel deployment files
+.vercel/
+
+# Pytest cache
+.pytest_cache/
+
+# OS / editor artifacts
+.DS_Store
+Thumbs.db
