@@ -262,7 +262,7 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ transaction_id: transactionId, failure_type: failureType })
       },
-      () => demoStore.executeRecovery(transactionId, 'RETRY_PAYMENT', 'BANK_DOWNTIME')
+      () => demoStore.injectFailure(transactionId, failureType)
     );
   }
 };

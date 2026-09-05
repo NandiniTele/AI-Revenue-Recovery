@@ -8,7 +8,8 @@
 
 | | URL |
 |---|---|
-| 🌐 **Live Demo (Frontend)** | [https://ai-revenue-recovery-rust-seven.vercel.app](https://ai-revenue-recovery-rust-seven.vercel.app) |
+| 🌐 **Live Demo (Vercel)** | [https://ai-revenue-recovery-rust-seven.vercel.app](https://ai-revenue-recovery-rust-seven.vercel.app) |
+| 🌐 **Live Demo (GitHub Pages)** | [https://nandinitele.github.io/AI-Revenue-Recovery/](https://nandinitele.github.io/AI-Revenue-Recovery/) |
 | 📦 **GitHub Repository** | [https://github.com/NandiniTele/AI-Revenue-Recovery](https://github.com/NandiniTele/AI-Revenue-Recovery) |
 
 ---

@@ -292,26 +292,35 @@ export const demoStore = {
   },
 
   diagnoseTransaction: async (transactionId: string) => {
-    const tx = transactions.find(t => t.transaction_id === transactionId);
+    let tx = transactions.find(t => t.transaction_id === transactionId);
+    if (!tx) {
+      tx = transactions[0];
+    }
+    const diagText = tx?.diagnosis_text || `Failure diagnosed as ${tx?.failure_reason?.replace(/_/g, ' ') || 'transient gateway error'}. Recommended bounded recovery based on risk model score.`;
     return {
-      transaction_id: transactionId,
-      diagnosis: tx?.diagnosis_text || 'Failure diagnosed as transient gateway timeout.',
+      transaction_id: tx?.transaction_id || transactionId,
+      diagnosis_text: diagText,
+      diagnosis: diagText,
       recommended_action: tx?.recommended_action || 'RETRY_PAYMENT',
-      risk_score: tx?.risk_score || 35,
-      recovery_probability: tx?.recovery_probability || 0.8
+      risk_score: tx?.risk_score ?? 38,
+      recovery_probability: tx?.recovery_probability ?? 0.78
     };
   },
 
   executeRecovery: async (transactionId: string, actionOverride?: string, forceFailureMode?: string) => {
-    const tx = transactions.find(t => t.transaction_id === transactionId);
+    let tx = transactions.find(t => t.transaction_id === transactionId);
+    if (!tx) {
+      tx = transactions.find(t => t.payment_status === 'FAILED') || transactions[0];
+    }
     const action = actionOverride || tx?.recommended_action || 'RETRY_PAYMENT';
+    const auditId = `AUD-${Date.now().toString().slice(-6)}`;
 
     // 1. Guardrail Check: Max retries
     if (tx && tx.retry_count >= merchantSettings.max_retries_allowed) {
       const blockedAudit: AuditLogItem = {
-        audit_id: `AUD-BLK-${Date.now().toString().slice(-6)}`,
+        audit_id: auditId,
         timestamp: new Date().toISOString(),
-        transaction_id: transactionId,
+        transaction_id: tx.transaction_id,
         agent_decision: action,
         reason: `Policy Blocked: Maximum ${merchantSettings.max_retries_allowed} retries exceeded.`,
         risk_score: tx.risk_score || 85,
@@ -326,36 +335,47 @@ export const demoStore = {
       };
       auditLogs.unshift(blockedAudit);
       return {
+        audit_id: auditId,
+        transaction_id: tx.transaction_id,
         policy_result: 'BLOCKED',
         execution_result: 'BLOCKED',
-        reason: `Maximum ${merchantSettings.max_retries_allowed} retries exceeded for this transaction. Action halted by autonomous guardrails.`
+        reason: `Maximum ${merchantSettings.max_retries_allowed} retries exceeded for this transaction. Action halted by autonomous guardrails.`,
+        message: `Maximum ${merchantSettings.max_retries_allowed} retries exceeded. Action safely blocked.`
       };
     }
 
     // 2. Failure simulation
-    if (forceFailureMode === 'BANK_DOWNTIME') {
-      if (tx) tx.retry_count = (tx.retry_count || 0) + 1;
+    if (forceFailureMode) {
+      if (tx) {
+        tx.retry_count = (tx.retry_count || 0) + 1;
+        tx.current_state = tx.retry_count >= merchantSettings.max_retries_allowed ? 'STOPPED' : 'IN_RECOVERY';
+      }
       const failAudit: AuditLogItem = {
-        audit_id: `AUD-SIM-${Date.now().toString().slice(-6)}`,
+        audit_id: auditId,
         timestamp: new Date().toISOString(),
-        transaction_id: transactionId,
+        transaction_id: tx?.transaction_id || transactionId,
         agent_decision: action,
-        reason: 'Simulated Gateway 500 error / Bank downtime.',
+        reason: `Simulated Gateway error (${forceFailureMode}). Stopping rules activated exponential cooldown.`,
         risk_score: tx?.risk_score || 70,
         action_requested: action,
         policy_result: 'APPROVED',
         action_executed: action,
         execution_result: 'FAILED',
         recovered_amount: 0,
-        failure_reason: 'BANK_DOWNTIME_SIMULATED',
+        failure_reason: forceFailureMode,
         next_action: 'SCHEDULE_EXPONENTIAL_BACKOFF',
-        details: { mode: 'SANDBOX_FAILURE_SIMULATION' }
+        details: { mode: 'SANDBOX_FAILURE_SIMULATION', error: forceFailureMode }
       };
       auditLogs.unshift(failAudit);
       return {
+        audit_id: auditId,
+        transaction_id: tx?.transaction_id || transactionId,
         policy_result: 'APPROVED',
         execution_result: 'FAILED',
-        failure_reason: 'Bank Downtime Simulation: Gateway returned 500. Scheduled exponential backoff cooldown.'
+        failure_reason: forceFailureMode,
+        next_action: 'SCHEDULE_EXPONENTIAL_BACKOFF',
+        reason: `Gateway Error Simulation (${forceFailureMode}): Action aborted safely. Cooldown period scheduled.`,
+        message: `Gateway Error Simulation (${forceFailureMode}): Action aborted safely. Cooldown period scheduled.`
       };
     }
 
@@ -363,9 +383,9 @@ export const demoStore = {
     if (action === 'CREATE_ESCALATION') {
       if (tx) tx.current_state = 'ESCALATED';
       const escAudit: AuditLogItem = {
-        audit_id: `AUD-ESC-${Date.now().toString().slice(-6)}`,
+        audit_id: auditId,
         timestamp: new Date().toISOString(),
-        transaction_id: transactionId,
+        transaction_id: tx?.transaction_id || transactionId,
         agent_decision: action,
         reason: 'Manual escalation initiated by merchant.',
         risk_score: tx?.risk_score || 50,
@@ -380,9 +400,12 @@ export const demoStore = {
       };
       auditLogs.unshift(escAudit);
       return {
+        audit_id: auditId,
+        transaction_id: tx?.transaction_id || transactionId,
         policy_result: 'APPROVED',
         execution_result: 'SUCCESS',
-        reason: 'Transaction successfully marked as ESCALATED.'
+        reason: 'Transaction successfully escalated to merchant support team.',
+        message: 'Transaction successfully escalated to merchant support team.'
       };
     }
 
@@ -396,9 +419,9 @@ export const demoStore = {
     }
 
     const successAudit: AuditLogItem = {
-      audit_id: `AUD-REC-${Date.now().toString().slice(-6)}`,
+      audit_id: auditId,
       timestamp: new Date().toISOString(),
-      transaction_id: transactionId,
+      transaction_id: tx?.transaction_id || transactionId,
       agent_decision: action,
       reason: 'Autonomous recovery action executed and funds successfully captured.',
       risk_score: tx?.risk_score || 25,
@@ -414,10 +437,61 @@ export const demoStore = {
     auditLogs.unshift(successAudit);
 
     return {
+      audit_id: auditId,
+      transaction_id: tx?.transaction_id || transactionId,
       policy_result: 'APPROVED',
       execution_result: 'SUCCESS',
       recovered_amount: recoveredAmount,
-      reason: `Successfully recovered ₹${recoveredAmount.toLocaleString('en-IN')}`
+      reason: `Successfully recovered ₹${recoveredAmount.toLocaleString('en-IN')}`,
+      message: `Successfully recovered ₹${recoveredAmount.toLocaleString('en-IN')}`
+    };
+  },
+
+  injectFailure: async (transactionId = 'TX1024', failureType = 'GATEWAY_TIMEOUT') => {
+    let tx = transactions.find(t => t.transaction_id === transactionId);
+    if (!tx) {
+      tx = transactions.find(t => t.payment_status === 'FAILED') || transactions[0];
+    }
+    if (tx) {
+      tx.retry_count = Math.min((tx.retry_count || 0) + 1, merchantSettings.max_retries_allowed);
+      tx.current_state = tx.retry_count >= merchantSettings.max_retries_allowed ? 'STOPPED' : 'IN_RECOVERY';
+    }
+
+    const auditId = `AUD-SIM-${Date.now().toString().slice(-6)}`;
+    const failAudit: AuditLogItem = {
+      audit_id: auditId,
+      timestamp: new Date().toISOString(),
+      transaction_id: tx?.transaction_id || transactionId,
+      agent_decision: 'RETRY_PAYMENT',
+      reason: `Simulated ${failureType}: Gateway returned failure. Stopping rules triggered exponential backoff.`,
+      risk_score: tx?.risk_score || 70,
+      action_requested: 'RETRY_PAYMENT',
+      policy_result: 'APPROVED',
+      action_executed: 'RETRY_PAYMENT',
+      execution_result: 'FAILED',
+      recovered_amount: 0,
+      failure_reason: failureType,
+      next_action: 'SCHEDULE_EXPONENTIAL_BACKOFF',
+      details: { mode: 'SANDBOX_FAILURE_SIMULATION', error: failureType }
+    };
+    auditLogs.unshift(failAudit);
+
+    const execResult = {
+      audit_id: auditId,
+      transaction_id: tx?.transaction_id || transactionId,
+      policy_result: 'APPROVED',
+      execution_result: 'FAILED',
+      failure_reason: failureType,
+      next_action: 'SCHEDULE_EXPONENTIAL_BACKOFF',
+      reason: `Simulated gateway error ${failureType}. Cooldown backoff activated.`
+    };
+
+    return {
+      scenario: 'GRACEFUL_FAILURE_HANDLING_DEMO',
+      transaction_id: tx?.transaction_id || transactionId,
+      injected_error: failureType,
+      execution_result: execResult,
+      demonstration_notes: `The AI attempted payment recovery on ${tx?.transaction_id || transactionId}, but encountered simulated '${failureType}'. Instead of retrying in an infinite loop, the agent captured the error, incremented the retry counter (${tx?.retry_count || 1}/${merchantSettings.max_retries_allowed}), updated state to '${tx?.current_state}', and recorded the event in the audit trail.`
     };
   },
 
@@ -425,11 +499,14 @@ export const demoStore = {
     let recoveredCount = 0;
     let recoveredTotal = 0;
     let blockedCount = 0;
+    let escalatedCount = 0;
+    let failedCount = 0;
 
     const unrecovered = transactions.filter(t =>
       (t.payment_status === 'FAILED' || t.payment_status === 'ABANDONED') &&
       !t.is_recovered &&
       t.current_state !== 'ESCALATED' &&
+      t.current_state !== 'STOPPED' &&
       t.failure_reason !== 'fraud_blocked' &&
       t.failure_reason !== 'account_closed'
     );
@@ -439,6 +516,7 @@ export const demoStore = {
     for (const tx of targetBatch) {
       if (tx.retry_count >= merchantSettings.max_retries_allowed) {
         blockedCount++;
+        tx.current_state = 'STOPPED';
         auditLogs.unshift({
           audit_id: `AUD-BTH-BLK-${Date.now().toString().slice(-6)}`,
           timestamp: new Date().toISOString(),
@@ -453,6 +531,28 @@ export const demoStore = {
           recovered_amount: 0,
           failure_reason: 'MAX_RETRIES_EXCEEDED',
           next_action: 'STOP',
+          details: { batch: true }
+        });
+        continue;
+      }
+
+      if (tx.amount > merchantSettings.high_value_manual_threshold) {
+        escalatedCount++;
+        tx.current_state = 'ESCALATED';
+        auditLogs.unshift({
+          audit_id: `AUD-BTH-ESC-${Date.now().toString().slice(-6)}`,
+          timestamp: new Date().toISOString(),
+          transaction_id: tx.transaction_id,
+          agent_decision: 'CREATE_ESCALATION',
+          reason: `Policy Safeguard: Amount ₹${tx.amount.toLocaleString('en-IN')} exceeds auto threshold of ₹${merchantSettings.high_value_manual_threshold.toLocaleString('en-IN')}`,
+          risk_score: tx.risk_score || 65,
+          action_requested: 'CREATE_ESCALATION',
+          policy_result: 'APPROVED',
+          action_executed: 'ESCALATED',
+          execution_result: 'ESCALATED',
+          recovered_amount: 0,
+          failure_reason: null,
+          next_action: 'NOTIFY_MERCHANT_OPS',
           details: { batch: true }
         });
         continue;
@@ -484,10 +584,14 @@ export const demoStore = {
     }
 
     return {
+      message: `Processed ${targetBatch.length} transactions in batch.`,
       processed_count: targetBatch.length,
       recovered_count: recoveredCount,
+      recovered_amount: Math.round(recoveredTotal * 100) / 100,
       recovered_total: Math.round(recoveredTotal * 100) / 100,
-      blocked_count: blockedCount
+      blocked_count: blockedCount,
+      escalated_count: escalatedCount,
+      failed_count: failedCount
     };
   },
 
