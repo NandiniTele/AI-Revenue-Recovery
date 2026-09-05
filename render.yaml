@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: ai-revenue-recovery-api
+    runtime: python
+    buildCommand: pip install -r requirements.txt && python -m backend.seed_db
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        value: sqlite:///data/recoverai.db
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+    healthCheckPath: /api/health
+    autoDeploy: true
