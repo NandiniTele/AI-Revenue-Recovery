@@ -1,0 +1,16 @@
+{
+  "name": "ai-revenue-recovery",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -k -n \"backend,frontend\" -c \"blue.bold,green.bold\" \".\\venv\\Scripts\\python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload\" \"npm --prefix frontend run dev\"",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "dev:backend": ".\\venv\\Scripts\\python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload",
+    "dev:all": "start_all.bat",
+    "start": "npm run dev",
+    "build": "npm --prefix frontend run build",
+    "preview": "npm --prefix frontend run preview"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5"
+  }
+}
